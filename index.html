@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Zombie Survival Online</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            color: white;
+            font-family: Arial;
+        }
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            margin: 20px auto;
+        }
+        #gameCanvas {
+            border: 2px solid #333;
+        }
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="hud">
+            <div>Time: <span id="timer">0</span>s</div>
+            <div>Humans: <span id="humansCount">0</span></div>
+            <div>Zombies: <span id="zombiesCount">0</span></div>
+            <div id="phaseText">Phase: Normal</div>
+        </div>
+    </div>
+
+<script>
+const CONFIG = {
+    CELL_SIZE: 20,
+    WIDTH: 800,
+    HEIGHT: 600,
+    FPS: 60,
+    COLORS: {
+        human: '#FF0',
+        zombie: '#0F0', 
+        necromancer: '#FD0',
+        survivor: '#F00',
+        scientist: '#FFF',
+        healer: '#00F',
+        object: '#000'
+    },
+    INFECTION_RADIUS: 3,
+    HEAL_RADIUS: 3
+};
+
+class ZombieGame {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.grid = new Map();
+        this.entities = [];
+        this.gameTime = 0;
+        this.huntPhase = false;
+        this.init();
+    }
+
+    init() {
+        // Setup canvas
+        this.canvas.width = CONFIG.WIDTH;
+        this.canvas.height = CONFIG.HEIGHT;
+        
+        // Spawn entities
+        this.spawn('object', 0.15);
+        this.spawn('human', 0.85);
+        this.spawnNecromancer();
+        
+        // Start game loop
+        setInterval(() => this.update(), 1000/CONFIG.FPS);
+    }
+
+    spawn(type, ratio) {
+        const cols = CONFIG.WIDTH/CONFIG.CELL_SIZE;
+        const rows = CONFIG.HEIGHT/CONFIG.CELL_SIZE;
+        const count = Math.floor(cols * rows * ratio);
+        
+        for(let i = 0; i < count; i++) {
+            let pos;
+            do {
+                pos = this.randomGridPos();
+            } while(this.grid.has(pos));
+            
+            this.grid.set(pos, {type, data: {}});
+            if(type === 'human') this.entities.push(pos);
+        }
+    }
+
+    spawnNecromancer() {
+        let pos;
+        do {
+            pos = this.randomGridPos();
+        } while(this.grid.has(pos));
+        
+        this.grid.set(pos, {type: 'necromancer', data: {}});
+    }
+
+    randomGridPos() {
+        return [
+            Math.floor(Math.random() * (CONFIG.WIDTH/CONFIG.CELL_SIZE)),
+            Math.floor(Math.random() * (CONFIG.HEIGHT/CONFIG.CELL_SIZE))
+        ];
+    }
+
+    update() {
+        this.gameTime += 1/CONFIG.FPS;
+        this.updateHUD();
+        
+        // Game phases
+        if(!this.huntPhase && this.entities.some(e => this.grid.get(e).type === 'scientist')) {
+            this.startHuntPhase();
+        }
+        
+        // AI Logic
+        this.entities.forEach((pos, i) => {
+            const entity = this.grid.get(pos);
+            switch(entity.type) {
+                case 'human': this.updateHuman(pos); break;
+                case 'zombie': this.updateZombie(pos); break;
+                case 'survivor': this.updateSurvivor(pos); break;
+                case 'scientist': this.updateScientist(pos); break;
+                case 'healer': this.updateHealer(pos); break;
+            }
+        });
+        
+        this.checkVictory();
+        this.draw();
+    }
+
+    updateHuman(pos) {
+        // Survival timer
+        const human = this.grid.get(pos);
+        human.data.timer = (human.data.timer || 0) + 1;
+        
+        if(human.data.timer >= CONFIG.FPS * 60) { // 1 minute
+            this.convertTo(pos, 'survivor');
+        }
+    }
+
+    updateSurvivor(pos) {
+        // Build fortress logic
+        const objects = this.getNeighbors(pos, 5).filter(p => 
+            this.grid.get(p)?.type === 'object'
+        ).length;
+        
+        if(objects >= 60) {
+            this.convertTo(pos, 'scientist');
+        }
+    }
+
+    updateScientist(pos) {
+        // Move away from zombies
+        const zombies = this.getNeighbors(pos, 5).filter(p => 
+            this.grid.get(p)?.type === 'zombie'
+        );
+        
+        if(zombies.length > 0) {
+            const move = this.calculateFleeDirection(pos, zombies);
+            this.moveEntity(pos, move);
+        }
+    }
+
+    startHuntPhase() {
+        this.huntPhase = true;
+        setTimeout(() => {
+            if(this.grid.get(pos => pos.type === 'scientist')) {
+                this.convertTo(scientistPos, 'healer');
+            }
+            this.huntPhase = false;
+        }, 60000);
+    }
+
+    // ... (остальные методы AI)
+
+    draw() {
+        this.ctx.clearRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+        
+        this.grid.forEach((entity, [x, y]) => {
+            this.ctx.fillStyle = CONFIG.COLORS[entity.type];
+            this.ctx.fillRect(
+                x * CONFIG.CELL_SIZE,
+                y * CONFIG.CELL_SIZE,
+                CONFIG.CELL_SIZE,
+                CONFIG.CELL_SIZE
+            );
+        });
+    }
+
+    updateHUD() {
+        document.getElementById('timer').textContent = Math.floor(this.gameTime);
+        document.getElementById('humansCount').textContent = 
+            [...this.grid.values()].filter(e => e.type === 'human').length;
+        document.getElementById('zombiesCount').textContent = 
+            [...this.grid.values()].filter(e => e.type === 'zombie').length;
+        document.getElementById('phaseText').textContent = 
+            `Phase: ${this.huntPhase ? 'Hunt!' : 'Normal'}`;
+    }
+}
+
+// Инициализация игры
+window.addEventListener('load', () => {
+    const game = new ZombieGame();
+    
+    // Пауза при потере фокуса
+    window.addEventListener('blur', () => game.stop());
+    window.addEventListener('focus', () => game.start());
+});
+</script>
+</body>
+</html>
